@@ -68,6 +68,17 @@
             video.setAttribute('playsinline', '');
             video.muted = true;
             
+            // 简化加载处理
+            video.addEventListener('loadeddata', () => {
+                video.classList.add('loaded');
+                loadingDiv.remove();
+            }, { once: true });
+            
+            video.addEventListener('error', () => {
+                loadingDiv.textContent = '加载失败';
+                loadingDiv.style.color = '#ff4444';
+            }, { once: true });
+            
             let isPlaying = false;
             
             // 修改鼠标悬停播放功能
@@ -138,25 +149,6 @@
                 }
             });
             
-            // 视频加载成功
-            video.addEventListener('loadeddata', () => {
-                console.log(`视频 ${videoNumber} 加载成功`);
-                video.classList.add('loaded');
-                loadingDiv.remove();
-            });
-            
-            // 视频加载失败
-            video.addEventListener('error', (e) => {
-                console.error(`视频 ${videoNumber} 加载失败:`, {
-                    error: e.target.error,
-                    src: video.src,
-                    readyState: video.readyState,
-                    networkState: video.networkState
-                });
-                loadingDiv.textContent = '加载失败';
-                loadingDiv.style.color = '#ff4444';
-            });
-            
             videoCard.appendChild(video);
             return videoCard;
         }
@@ -189,7 +181,7 @@
                 button.disabled = true;
                 
                 try {
-                    // 清空现有视频
+                    // ��空现有视频
                     videoContainer.innerHTML = '';
                     currentCountElement.textContent = '0';
                     totalCountElement.textContent = '加载中...';
@@ -224,7 +216,7 @@
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
-                // 重新计算网格布局
+                // 重新计算格布局
                 const container = document.querySelector('.video-container');
                 if (window.innerWidth <= 767) {
                     container.style.gridTemplateColumns = 'repeat(2, 1fr)';
@@ -255,7 +247,7 @@
                 // 随机动画持续时间
                 const duration = 3 + Math.random() * 4;
                 
-                // 随机初始透明度
+                // 随机初始透明
                 const initialOpacity = 0.3 + Math.random() * 0.7;
                 
                 star.style.cssText = `
@@ -271,61 +263,120 @@
             }
         }
 
-        // 检查视频是否存在
+        // 修改检查视频函数
         function checkVideo(number) {
             return new Promise((resolve) => {
                 console.log(`检查视频 ${number}`);
                 const video = document.createElement('video');
+                
+                video.preload = 'metadata';
                 video.src = `sp/${number}.mp4`;
                 
-                video.onloadedmetadata = () => {
+                video.addEventListener('loadedmetadata', () => {
                     console.log(`视频 ${number} 检查成功`);
                     validVideos.push(number);
                     video.remove();
                     resolve(true);
-                };
+                }, { once: true });
                 
-                video.onerror = () => {
+                video.addEventListener('error', () => {
                     console.log(`视频 ${number} 检查失败`);
                     video.remove();
                     resolve(false);
-                };
+                }, { once: true });
                 
+                // 增加超时时间到8秒
                 setTimeout(() => {
                     console.log(`视频 ${number} 检查超时`);
                     video.remove();
                     resolve(false);
-                }, 5000);
+                }, 8000);
             });
         }
         
-        // 获取实际视频总数
+        // 修改获取视频总数的函数
         async function getTotalVideos() {
             let consecutiveFailures = 0;
-            const maxConsecutiveFailures = 3; // 连续失败3次就停止检测
+            const maxConsecutiveFailures = 5; // 连续失败5次才停止
             let number = 1;
             
             while (consecutiveFailures < maxConsecutiveFailures) {
-                if (await checkVideo(number)) {
-                    consecutiveFailures = 0;
-                    number++;
-                } else {
+                try {
+                    if (await checkVideo(number)) {
+                        consecutiveFailures = 0; // 成功后重置连续失败计数
+                        console.log(`成功检测到视频 ${number}`);
+                        number++;
+                    } else {
+                        // 如果是前几次失败，多尝试几次
+                        if (consecutiveFailures < 3) {
+                            // 重试当前编号3次
+                            let retrySuccess = false;
+                            for (let retry = 0; retry < 3; retry++) {
+                                console.log(`重试第 ${retry + 1} 次检测视频 ${number}`);
+                                await new Promise(resolve => setTimeout(resolve, 300)); // 等待300ms后重试
+                                if (await checkVideo(number)) {
+                                    retrySuccess = true;
+                                    break;
+                                }
+                            }
+                            if (retrySuccess) {
+                                consecutiveFailures = 0;
+                                number++;
+                                continue;
+                            }
+                        }
+                        
+                        console.log(`视频 ${number} 检测失败，连续失败次数: ${consecutiveFailures + 1}`);
+                        consecutiveFailures++;
+                        number++;
+                    }
+                    
+                    // 动态调整检查间隔
+                    const delay = Math.min(50 + consecutiveFailures * 10, 200);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    
+                    // 每检测100个视频显示一次进度
+                    if (number % 100 === 0) {
+                        console.log(`已检测 ${number} 个视频，当前有效视频数: ${validVideos.length}`);
+                    }
+                    
+                } catch (error) {
+                    console.error(`检查视频 ${number} 失败:`, error);
                     consecutiveFailures++;
+                    number++;
                 }
-                // 添加短暂延迟，避免过快检测
-                await new Promise(resolve => setTimeout(resolve, 100));
             }
             
+            console.log(`检测完成，共找到 ${validVideos.length} 个有效视频`);
+            // 对有效视频编号进行排序
+            validVideos.sort((a, b) => a - b);
             return validVideos.length;
         }
         
-        // 分批加载视频
+        // 修改分批加载函数，优化并行加载
         async function loadVideoBatch(videos) {
-            for (let i = 0; i < videos.length; i++) {
-                // 一次只加载一个视频
-                await loadVideo(videos[i]);
-                // 添加短暂延迟，避免过快加载
-                await new Promise(resolve => setTimeout(resolve, 200));
+            const batchSize = 8; // 每批加载8个视频
+            const totalBatches = Math.ceil(videos.length / batchSize);
+            
+            for (let i = 0; i < videos.length; i += batchSize) {
+                const batchNumber = Math.floor(i / batchSize) + 1;
+                console.log(`加载第 ${batchNumber}/${totalBatches} 批视频`);
+                
+                const batch = videos.slice(i, i + batchSize);
+                const results = await Promise.all(
+                    batch.map(number => loadVideo(number).catch(error => {
+                        console.error(`批量加载视频 ${number} 失败:`, error);
+                        return false;
+                    }))
+                );
+                
+                // 统计本批次成功加载的视频数
+                const successCount = results.filter(Boolean).length;
+                console.log(`第 ${batchNumber} 批完成，成功加载 ${successCount}/${batch.length} 个视频`);
+                
+                // 根据加载结果动态调整等待时间
+                const waitTime = successCount < batch.length ? 200 : 100;
+                await new Promise(resolve => setTimeout(resolve, waitTime));
             }
         }
         
@@ -340,19 +391,20 @@
                     const video = videoCard.querySelector('video');
                     
                     await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            reject(new Error('加载超时'));
-                        }, 10000);
-                        
-                        video.onloadeddata = () => {
-                            clearTimeout(timeout);
+                        video.addEventListener('loadeddata', () => {
+                            console.log(`视频 ${number} 加载完成`);
                             resolve();
-                        };
+                        }, { once: true });
                         
-                        video.onerror = () => {
-                            clearTimeout(timeout);
+                        video.addEventListener('error', () => {
+                            console.log(`视频 ${number} 加载失败`);
                             reject(new Error('加载失败'));
-                        };
+                        }, { once: true });
+                        
+                        // 设置较短的超时
+                        setTimeout(() => {
+                            reject(new Error('加载超时'));
+                        }, 5000);
                     });
                     
                     loadedCount++;
@@ -409,7 +461,8 @@
             document.body.appendChild(loadingElement);
             
             const loadingInterval = setInterval(() => {
-                loadingElement.textContent = `检测视频中${dots[index]}`;
+                const validVideoCount = validVideos.length;
+                loadingElement.textContent = `正在检测视频${dots[index]}${validVideoCount > 0 ? ` (已找到${validVideoCount}个)` : ''}`;
                 index = (index + 1) % dots.length;
             }, 500);
             
